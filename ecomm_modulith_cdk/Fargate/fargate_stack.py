@@ -22,6 +22,7 @@ class EcsFargateStack(Stack):
                  pg_info: dict,
                  docdb_info: dict,
                  ca_bundle_s3_uri: str = None,
+                 run_mail_service: bool = True,
                  **kwargs) -> None:
         super().__init__(scope, construct_id, description="ECS Fargate cluster for Ecomm Application", **kwargs)
 
@@ -135,80 +136,14 @@ class EcsFargateStack(Stack):
 
 
         """
-        Create the mail service with load balancer to expose UI
-        TODO: Can be removed in production. Change destination in application.
-        """
-        mail_service_task_def = ecs.FargateTaskDefinition(self, "MailServiceTaskDef",
-            memory_limit_mib=1024,
-            cpu=512,
-            execution_role=self.execution_role,
-            task_role=self.task_role
-        )
-        mail_service_task_def.add_container("smtp-mail-svc",
-            image=ecs.ContainerImage.from_registry("maildev/maildev"),
-            container_name="smtp-mail-svc",
-            environment={
-                "MAILDEV_SMTP_PORT": "1025",
-                "MAILDEV_WEB_PORT": "1080",
-                "MAILDEV_INCOMING_USER": "mailuser",
-                "MAILDEV_INCOMING_PASS": "mailpassword",
-            },
-            logging=ecs.LogDriver.aws_logs(stream_prefix="smtp-mail-svc", log_retention=logs.RetentionDays.ONE_DAY),
-            port_mappings=[
-                ecs.PortMapping(container_port=1080, name="http", protocol=ecs.Protocol.TCP),
-                ecs.PortMapping(container_port=1025, name="smtp", protocol=ecs.Protocol.TCP)
-            ]
-        )
-        mail_service = ecs_patterns.ApplicationLoadBalancedFargateService(self, "MailService",
-            cluster=self.cluster,
-            cpu=512,
-            memory_limit_mib=1024,
-            desired_count=1,
-            public_load_balancer=True,
-            service_name="smtp-mail-svc",
-            load_balancer_name="micro-mail-svc-lb",
-            protocol=elbv2.ApplicationProtocol.HTTP,
-            task_definition=mail_service_task_def,
-            health_check_grace_period=Duration.seconds(60),
-            enable_execute_command=True,
-            circuit_breaker=ecs.DeploymentCircuitBreaker(enable=True, rollback=True)
-
-        )
-        mail_service.target_group.configure_health_check(
-            path="/",
-            port="1080",
-            interval=Duration.seconds(30),
-            timeout=Duration.seconds(5),
-            healthy_threshold_count=2,
-            unhealthy_threshold_count=3
-        )
-        mail_service.service.enable_service_connect(
-            log_driver=ecs.LogDriver.aws_logs(
-                stream_prefix="mail-svc-connect", 
-                log_retention=logs.RetentionDays.ONE_DAY
-            ),
-            namespace=namespace.namespace_name,
-            services=[
-                ecs.ServiceConnectService(
-                    port_mapping_name="smtp", 
-                    dns_name="smtp-mail-svc",
-                    port=1025,
-                    discovery_name="smtp-mail-svc",
-                    idle_timeout=Duration.hours(1)
-                    )]
-            )
-        mail_service.service.connections.security_groups[0].add_ingress_rule(
-            peer=ec2.Peer.any_ipv4(),
-            connection=ec2.Port.tcp(1025),
-            description="Allow incoming traffic to MailDev mail interface"
-        )
-        
-   
-        
-        """
-        Create the rest service first so that we can use it to 
-        connect to the other services. It uses load balancer. 
-        It will act as the controller for the other services
+        Create the Ecomm application service running on Fargate with an Application Load Balancer to expose the service to the internet.
+         - The service will run 2 tasks for high availability and load balancing.
+         - The service will be registered with Cloud Map for service discovery.
+         - The service will have a health check configured to monitor the health of the application.
+         - The service will have a circuit breaker enabled to automatically roll back failed deployments.
+         - The service will have a grace period for health checks to allow the application to start up before health checks are performed.
+         - The service will have execute command enabled for debugging purposes.
+         - The service will have environment variables configured to pass database connection information and JVM options to the
         """ 
         fargate_task_def = ecs.FargateTaskDefinition(self, "FargateServiceTaskDef",
             execution_role=self.execution_role,
@@ -262,6 +197,80 @@ class EcsFargateStack(Stack):
                     idle_timeout=Duration.hours(1)
                     )]
         )
+
+
+        """
+        Create the mail service with load balancer to expose UI
+        TODO: Can be removed in production. Change destination in application.
+        """
+
+        if run_mail_service:
+
+            mail_service_task_def = ecs.FargateTaskDefinition(self, "MailServiceTaskDef",
+                memory_limit_mib=1024,
+                cpu=512,
+                execution_role=self.execution_role,
+                task_role=self.task_role
+            )
+            mail_service_task_def.add_container("smtp-mail-svc",
+                image=ecs.ContainerImage.from_registry("maildev/maildev"),
+                container_name="smtp-mail-svc",
+                environment={
+                    "MAILDEV_SMTP_PORT": "1025",
+                    "MAILDEV_WEB_PORT": "1080",
+                    "MAILDEV_INCOMING_USER": "mailuser",
+                    "MAILDEV_INCOMING_PASS": "mailpassword",
+                },
+                logging=ecs.LogDriver.aws_logs(stream_prefix="smtp-mail-svc", log_retention=logs.RetentionDays.ONE_DAY),
+                port_mappings=[
+                    ecs.PortMapping(container_port=1080, name="http", protocol=ecs.Protocol.TCP),
+                    ecs.PortMapping(container_port=1025, name="smtp", protocol=ecs.Protocol.TCP)
+                ]
+            )
+            mail_service = ecs_patterns.ApplicationLoadBalancedFargateService(self, "MailService",
+                cluster=self.cluster,
+                cpu=512,
+                memory_limit_mib=1024,
+                desired_count=1,
+                public_load_balancer=True,
+                service_name="smtp-mail-svc",
+                load_balancer_name="micro-mail-svc-lb",
+                protocol=elbv2.ApplicationProtocol.HTTP,
+                task_definition=mail_service_task_def,
+                health_check_grace_period=Duration.seconds(60),
+                enable_execute_command=True,
+                circuit_breaker=ecs.DeploymentCircuitBreaker(enable=True, rollback=True)
+
+            )
+            mail_service.target_group.configure_health_check(
+                path="/",
+                port="1080",
+                interval=Duration.seconds(30),
+                timeout=Duration.seconds(5),
+                healthy_threshold_count=2,
+                unhealthy_threshold_count=3
+            )
+            mail_service.service.enable_service_connect(
+                log_driver=ecs.LogDriver.aws_logs(
+                    stream_prefix="mail-svc-connect", 
+                    log_retention=logs.RetentionDays.ONE_DAY
+                ),
+                namespace=namespace.namespace_name,
+                services=[
+                    ecs.ServiceConnectService(
+                        port_mapping_name="smtp", 
+                        dns_name="smtp-mail-svc",
+                        port=1025,
+                        discovery_name="smtp-mail-svc",
+                        idle_timeout=Duration.hours(1)
+                        )]
+                )
+            mail_service.service.connections.security_groups[0].add_ingress_rule(
+                peer=ec2.Peer.any_ipv4(),
+                connection=ec2.Port.tcp(1025),
+                description="Allow incoming traffic to MailDev mail interface"
+            )
+        
    
                
         # Create security group rules for the services that need DocumentDb
