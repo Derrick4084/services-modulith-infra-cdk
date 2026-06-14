@@ -158,6 +158,7 @@ class EcsFargateStack(Stack):
                 "POSTGRES_DB_SECRET_NAME": pg_info["secret-name"],
                 "DOCUMENTDB_SECRET_NAME": docdb_info["secret-name"],
                 "JAVA_TOOL_OPTIONS": "-Xms512m -Xmx3200m -XX:+UseG1GC",
+                "SPRING_PROFILES_ACTIVE": "prod"
             },
             logging=ecs.LogDriver.aws_logs(stream_prefix="ecomm-app-service", log_retention=logs.RetentionDays.ONE_WEEK),
             port_mappings=[ecs.PortMapping(container_port=8080, name="app-http", protocol=ecs.Protocol.TCP)]
