@@ -52,6 +52,7 @@ def handler(event, context):
         
         secret_arn = event['ResourceProperties']['SecretArn']
         databases = event['ResourceProperties']['Databases']
+        schemas = event['ResourceProperties']['Schemas']
         
         sm = boto3.client('secretsmanager')
         secret = json.loads(sm.get_secret_value(SecretId=secret_arn)['SecretString'])
@@ -89,11 +90,13 @@ def handler(event, context):
                 )
                 db_conn.autocommit = True
                 db_cursor = db_conn.cursor()
-                # Create services schema
-                db_cursor.execute(
-                    sql.SQL("CREATE SCHEMA IF NOT EXISTS {}")
-                    .format(sql.Identifier("services"))
-                )
+
+                # Create application schemas
+                for schema in schemas:
+                    db_cursor.execute(
+                        sql.SQL("CREATE SCHEMA IF NOT EXISTS {}")
+                        .format(sql.Identifier(schema))
+                    )
                 db_cursor.close()
                                           
             db_conn.close()
@@ -126,11 +129,12 @@ def handler(event, context):
 
         self.pg_secret.grant_read(db_creator_lambda)
 
-        # Custom resource to trigger database creation
+        # Custom resource to trigger database and schema creation
         CustomResource(self, "DatabaseCreator",
             service_token=db_creator_lambda.function_arn,
             properties={
                 "SecretArn": self.pg_secret.secret_arn,
-                "Databases": ["ecomm"]
+                "Databases": ["ecomm"],
+                "Schemas": ["ordering", "payment", "platform", "product", "security", "shipping", "web"]
             }
         )
