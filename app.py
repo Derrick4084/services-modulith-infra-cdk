@@ -9,12 +9,21 @@ from ecomm_modulith_cdk.DevTools.tools import DevToolStack
 from ecomm_modulith_cdk.DocumentDb.documentdb_stack import DocumentDBStack
 from ecomm_modulith_cdk.Postgres.postgresdb_stack import PostgresDBStack
 from ecomm_modulith_cdk.Postgres.postgres_config_stack import PostgresConfigStack
+from ecomm_modulith_cdk.ModelEc2.ai_model_stack import AiModelStack
 
 
 app = cdk.App()
 
 # Create the VPC for the entire application, all other stacks depend on this
 default_vpc = VpcStack(app, "VpcStack",
+    env=cdk.Environment(
+        account=cdk.Aws.ACCOUNT_ID, 
+        region=cdk.Aws.REGION
+    )
+)
+
+ai_model_stack = AiModelStack(app, "AiModelStack",
+    vpc=default_vpc.get_vpc,
     env=cdk.Environment(
         account=cdk.Aws.ACCOUNT_ID, 
         region=cdk.Aws.REGION
@@ -62,6 +71,7 @@ ecs_fargate = EcsFargateStack(app, "EcsFargateStack",
     vpc=default_vpc.get_vpc, 
     docdb_info=documentdb_stack.docdb_info,
     pg_info=postgresdb_stack.postgres_info,
+    model_info=ai_model_stack.model_info,
     env=cdk.Environment(
         account=cdk.Aws.ACCOUNT_ID, 
         region=cdk.Aws.REGION
@@ -70,6 +80,7 @@ ecs_fargate = EcsFargateStack(app, "EcsFargateStack",
 ecs_fargate.add_dependency(default_vpc)
 ecs_fargate.add_dependency(documentdb_stack)
 ecs_fargate.add_dependency(postgresdb_stack)
+ecs_fargate.add_dependency(ai_model_stack)
 
 
 # Creates tools for developement. No need to depoly for production
