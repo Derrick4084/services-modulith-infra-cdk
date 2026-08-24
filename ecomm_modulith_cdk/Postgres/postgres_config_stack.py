@@ -135,6 +135,6 @@ def handler(event, context):
             properties={
                 "SecretArn": self.pg_secret.secret_arn,
                 "Databases": ["ecomm"],
-                "Schemas": ["ordering", "payment", "platform", "product", "security", "shipping", "web"]
+                "Schemas": ["ordering", "payment", "platform", "product", "rag", "security", "shipping", "web"]
             }
         )
