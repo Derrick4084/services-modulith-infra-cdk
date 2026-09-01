@@ -14,7 +14,7 @@ from constructs import Construct
 
 
 class PostgresConfigStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, pg_info: dict, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, pg_info: dict, environment: str, **kwargs) -> None:
         super().__init__(scope, construct_id, description="Creates postgres databases and tables for microservices", **kwargs)
 
 
@@ -22,19 +22,20 @@ class PostgresConfigStack(Stack):
 
         self.pg_sg = ec2.SecurityGroup.from_security_group_id(
             scope=self,
-            id="PGSecurityGroup",
+            id=f"{environment}-PGSecurityGroup",
             security_group_id=pg_info["security-group-id"]
         )
 
         self.pg_secret = secretsmanager.Secret.from_secret_name_v2(
             scope=self,
-            id="PostgresSecret",
+            id=f"{environment}-PostgresSecret",
             secret_name=pg_info["secret-name"]
         )
 
         # Lambda function to create databases
-        db_creator_lambda = lambda_.Function(self, "DBCreatorLambda",
+        db_creator_lambda = lambda_.Function(self, f"{environment}-DBCreatorLambda",
             runtime=lambda_.Runtime.PYTHON_3_12,
+            function_name=f"{environment}-postgres-db-creator",
             handler="index.handler",
             code=lambda_.Code.from_inline('''
 import json
@@ -119,7 +120,7 @@ def handler(event, context):
             timeout=Duration.minutes(5),
             layers=[
                 lambda_.LayerVersion(
-                    self, "Psycopg2Layer",
+                    self, f"{environment}-Psycopg2Layer",
                     code=lambda_.Code.from_asset("lambda_layers/psycopg2"),
                     compatible_runtimes=[lambda_.Runtime.PYTHON_3_12]
                 )

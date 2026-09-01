@@ -9,17 +9,17 @@ from constructs import Construct
 
 
 class PostgresDBStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, environment: str, **kwargs) -> None:
         super().__init__(scope, construct_id, description="PostgreSQL cluster for order, payment and product microservices", **kwargs)
 
         
         self.vpc = vpc
 
         # Create a Security Group for the PostgreSQL Database
-        self.postgres_sg = ec2.SecurityGroup(self, "PostgresSG", 
+        self.postgres_sg = ec2.SecurityGroup(self, f"{environment}-PostgresSG", 
             vpc=self.vpc,
             description="Security group for PostgreSQL database",
-            security_group_name="PostgresDBSG"
+            security_group_name=f"{environment}-PostgresDBSG"
         )
         
         # Add Ingress Rule to allow connections to the PostgreSQL Database from anywhere
@@ -32,7 +32,7 @@ class PostgresDBStack(Stack):
         )
 
         # Create an Aurora PostgreSQL Cluster
-        self.postgres_db_cluster = rds.DatabaseCluster(self, "PostgresDBCluster",
+        self.postgres_db_cluster = rds.DatabaseCluster(self, f"{environment}-PostgresDBCluster",
             engine=rds.DatabaseClusterEngine.aurora_postgres(version=rds.AuroraPostgresEngineVersion.VER_15_8),
             writer=rds.ClusterInstance.serverless_v2("writer"),
             serverless_v2_min_capacity=0.5,
@@ -42,16 +42,16 @@ class PostgresDBStack(Stack):
                 subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
             ),
             security_groups=[self.postgres_sg],
-            default_database_name="monolithservices",
+            default_database_name=f"{environment}-monolithservices",
             removal_policy=RemovalPolicy.DESTROY,
-            cluster_identifier="postgres-cluster",
+            cluster_identifier=f"{environment}-postgres-cluster",
             credentials=rds.Credentials.from_generated_secret("postgres"),
             storage_encrypted=True,
             enable_data_api=True
         )
 
-        CfnOutput(self, "ClusterEndpoint", value=self.postgres_db_cluster.cluster_endpoint.hostname)
-        CfnOutput(self, "SecretName", value=self.postgres_db_cluster.secret.secret_name)
+        CfnOutput(self, f"{environment}-ClusterEndpoint", value=self.postgres_db_cluster.cluster_endpoint.hostname)
+        CfnOutput(self, f"{environment}-SecretName", value=self.postgres_db_cluster.secret.secret_name)
 
 
     @property

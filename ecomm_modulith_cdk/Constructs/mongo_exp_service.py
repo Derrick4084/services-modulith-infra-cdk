@@ -1,17 +1,17 @@
 from aws_cdk import (
-    Stack,
     Duration,
-    CfnOutput,
     aws_ecs as ecs,
     aws_ec2 as ec2,
     aws_ecs_patterns as ecs_patterns,
     aws_iam as iam,
     aws_elasticloadbalancingv2 as elbv2,
+    aws_logs as logs,
     aws_secretsmanager as secretsmanager,
-    aws_logs as logs
-
+    CfnOutput
+    
 )
 from constructs import Construct
+from dataclasses import dataclass
 
 
 def _add_cert_init(task_def: ecs.FargateTaskDefinition, s3_uri: str, log_prefix: str):
@@ -27,39 +27,44 @@ def _add_cert_init(task_def: ecs.FargateTaskDefinition, s3_uri: str, log_prefix:
     return init
 
 
-class DevToolStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.IVpc, ecs_info: dict, docdb_info: dict,
-                ca_bundle_s3_uri: str = None, **kwargs) -> None:
-        super().__init__(scope, construct_id, description="Mongo Express service for DocumentDB. USE FOR DEVELOPEMENT ONLY", **kwargs)
-      
-        cluster = ecs.Cluster.from_cluster_attributes(self, "ECSCluster",
-            cluster_name=ecs_info["cluster-name"],
-            cluster_arn=ecs_info["cluster-arn"],
-            vpc=vpc
-        )
-        task_role = iam.Role.from_role_arn(self, "MongoExpressTaskRole", role_arn=ecs_info["task-role-arn"])
-        execution_role = iam.Role.from_role_arn(self, "MongoExpressExecutionRole", role_arn=ecs_info["execution-role-arn"])
-        
+@dataclass
+class MongoExpressProps:
+    """Optional: Define a class or typed dict to handle input configurations cleanly."""
+    cluster: ecs.Cluster
+    execution_role: iam.Role
+    task_role: iam.Role
+    namespace: str
+    secret_name: str
+
+class MongoExpressService(Construct):
+    def __init__(self, scope: Construct, id: str, props: MongoExpressProps, **kwargs) -> None:
+        super().__init__(scope, id,**kwargs)
+
+
+        ca_bundle_s3_uri="s3://all-purpose-utility/certs/ca-bundle.pem"
+
         mongo_secret = secretsmanager.Secret.from_secret_name_v2(
-            scope=self,
-            id="MongoExpressSecret",
-            secret_name=docdb_info["secret-name"]
-        )
+                    scope=self,
+                    id="MongoExpressSecret",
+                    secret_name=props.secret_name
+                )
         documentdb_endpoint = mongo_secret.secret_value_from_json("documentdb_endpoint").unsafe_unwrap()
         port = mongo_secret.secret_value_from_json("port").unsafe_unwrap()
         username = mongo_secret.secret_value_from_json("username").unsafe_unwrap()
         password = mongo_secret.secret_value_from_json("password").unsafe_unwrap()
         documentdb_uri = f"mongodb://{username}:{password}@{documentdb_endpoint}:{port}/?ssl=true&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false"
-        
-          
-        # Create the mongo express service for documentdb cluster
+
+
         mongo_express_task_def = ecs.FargateTaskDefinition(self, "MongoExpressTaskDef",
             memory_limit_mib=1024,
             cpu=512,
-            execution_role=execution_role,
-            task_role=task_role
+            execution_role=props.execution_role,
+            task_role=props.task_role
         )
-        cert_init = _add_cert_init(mongo_express_task_def, ca_bundle_s3_uri, "documentdb") if ca_bundle_s3_uri else None
+
+
+
+        cert_init = _add_cert_init(mongo_express_task_def, ca_bundle_s3_uri, "documentdb")
         main_container = mongo_express_task_def.add_container("mongo-express",
             image=ecs.ContainerImage.from_registry("mongo-express:latest"),
             container_name="mongo-express",
@@ -79,15 +84,16 @@ class DevToolStack(Stack):
             ]
         )
 
-
         if cert_init:
             main_container.add_mount_points(ecs.MountPoint(container_path="/certs", source_volume="certs", read_only=True))
             main_container.add_container_dependencies(ecs.ContainerDependency(
                 container=cert_init,
                 condition=ecs.ContainerDependencyCondition.SUCCESS
-            ))       
+            ))  
+
+
         mongo_express_for_documentdb = ecs_patterns.ApplicationLoadBalancedFargateService(self, "MongoExpressService",
-            cluster=cluster,
+            cluster=props.cluster,
             cpu=512,
             memory_limit_mib=1024,
             desired_count=2,
@@ -108,10 +114,8 @@ class DevToolStack(Stack):
             unhealthy_threshold_count=3
         )
 
+
         CfnOutput(self, "MongoExpressDocumentDBALB", 
-                value=mongo_express_for_documentdb.load_balancer.load_balancer_dns_name,
-                export_name="MongoExpressDocumentDBALB"
-    )
-
-
-        
+            value=mongo_express_for_documentdb.load_balancer.load_balancer_dns_name,
+            export_name="MongoExpressDocumentDBALB"
+        )
