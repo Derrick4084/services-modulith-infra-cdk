@@ -24,9 +24,11 @@ class EcommProps:
     docdb_secret_name: str
     pg_sg_id: str
     docdb_sg_id: str
+    redis_info: dict
+    zipkin_info: dict
     namespace: str
-    zipkin_host: str
     active_profile: str
+    environment: str
 
 
 class EcommService(Construct):
@@ -34,26 +36,30 @@ class EcommService(Construct):
         super().__init__(scope, id,**kwargs)
 
         ecomm_image = "ghcr.io/derrick4084/services-modulith:latest"
+        pipeline_env = props.environment
 
 
-        self.ecomm_task_def = ecs.FargateTaskDefinition(self, "FargateServiceTaskDef",
+        self.ecomm_task_def = ecs.FargateTaskDefinition(self, f"{pipeline_env}-EcommAppFargateServiceTaskDef",
                     execution_role=props.execution_role,
                     task_role=props.task_role,
                     cpu=1024,
                     memory_limit_mib=2048
             )
-        self.ecomm_task_def.add_container("ecomm-app-svc",
+        self.ecomm_task_def.add_container(f"{pipeline_env}-ecomm-app-svc",
             image=ecs.ContainerImage.from_registry(ecomm_image, credentials=props.repo_secret),
-            container_name="ecomm-app-service",
+            container_name=f"{pipeline_env}-ecomm-service",
             environment={    
                 "POSTGRES_DB_SECRET_NAME": props.pg_secret_name,
                 "DOCUMENTDB_SECRET_NAME": props.docdb_secret_name,
                 "JAVA_TOOL_OPTIONS": "-Xms512m -Xmx3200m -XX:+UseG1GC",
                 "SPRING_PROFILES_ACTIVE": props.active_profile,
-                "ZIPKIN_HOST": props.zipkin_host
+                "ZIPKIN_HOST": props.zipkin_info["zipkin-host"],
+                "ZIPKIN_PORT": props.zipkin_info["zipkin-port"],
+                "REDIS_HOST": props.redis_info["redis-endpoint"],
+                "REDIS_PORT": props.redis_info["redis-port"]
             },
-            logging=ecs.LogDriver.aws_logs(stream_prefix="ecomm-app-service", log_retention=logs.RetentionDays.ONE_WEEK),
-            port_mappings=[ecs.PortMapping(container_port=8079, name="ecomm-http", protocol=ecs.Protocol.TCP)],
+            logging=ecs.LogDriver.aws_logs(stream_prefix=f"{pipeline_env}-ecomm-service", log_retention=logs.RetentionDays.ONE_WEEK),
+            port_mappings=[ecs.PortMapping(container_port=8079, name=f"{pipeline_env}-ecomm-http", protocol=ecs.Protocol.TCP)],
             health_check=ecs.HealthCheck(
                 command=["CMD-SHELL", "curl -f http://localhost:8079/actuator/health || exit 1"],
                 interval=Duration.seconds(30),
@@ -63,32 +69,32 @@ class EcommService(Construct):
             )
         )
 
-        self.ecomm_service = ecs.FargateService(self, "EcommAppService",
+        self.ecomm_service = ecs.FargateService(self, f"{pipeline_env}-EcommAppService",
             cluster=props.cluster,
             task_definition=self.ecomm_task_def,
             desired_count=2,
             assign_public_ip=False,
-            service_name="ecomm-app-svc",
+            service_name=f"{pipeline_env}-ecomm-service",
             enable_execute_command=True
         )
         self.ecomm_service.enable_service_connect(
             log_driver=ecs.LogDriver.aws_logs(
-                stream_prefix="ecomm-app-svc-connect",
+                stream_prefix=f"{pipeline_env}-ecomm-svc-connect",
                 log_retention=logs.RetentionDays.ONE_DAY
             ),
             namespace=props.namespace,
             services=[
                 ecs.ServiceConnectService(
-                    port_mapping_name="ecomm-http",
-                    dns_name="ecomm-app-svc",
+                    port_mapping_name=f"{pipeline_env}-ecomm-http",
+                    dns_name="ecomm-svc",
                     port=8079,
-                    discovery_name="ecomm-app-svc",
+                    discovery_name="ecomm-svc",
                     idle_timeout=Duration.hours(1)
                 )
             ]
         )
 
-        docdb_sg = ec2.SecurityGroup.from_security_group_id(self, "DocDbSG", props.docdb_sg_id)
+        docdb_sg = ec2.SecurityGroup.from_security_group_id(self, f"{pipeline_env}-DocDbSG", props.docdb_sg_id)
         docdb_sg.add_ingress_rule(
             peer=self.ecomm_service.connections.security_groups[0],
             connection=ec2.Port.tcp(27017),
@@ -96,7 +102,7 @@ class EcommService(Construct):
         )
 
         # Create security group rules for the services that need to access Postgres
-        postgres_sg = ec2.SecurityGroup.from_security_group_id(self, "PostgresSG", props.pg_sg_id)
+        postgres_sg = ec2.SecurityGroup.from_security_group_id(self, f"{pipeline_env}-PostgresSG", props.pg_sg_id)
         postgres_sg.add_ingress_rule(
             peer=self.ecomm_service.connections.security_groups[0],
             connection=ec2.Port.tcp(5432),

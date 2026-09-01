@@ -13,14 +13,14 @@ import json
 
 
 class DocumentDBStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, environment: str, **kwargs) -> None:
         super().__init__(scope, construct_id, description="DocumentDB cluster for customer and notification services", **kwargs)
         
         self.vpc = vpc
 
         # Create a secret to store the DocumentDB credentials
-        self.documentdb_master_user = "docadmin"
-        self.documentdb_secret = secretsmanager.Secret(self, "DocumentDBSecret",
+        self.documentdb_master_user = f"{environment}-docadmin"
+        self.documentdb_secret = secretsmanager.Secret(self, f"{environment}-DocumentDBSecret",
             generate_secret_string=secretsmanager.SecretStringGenerator(
                 secret_string_template='{"username":"' + self.documentdb_master_user + '", "port": 27017, "documentdb_endpoint": ""}',
                 generate_string_key="password",
@@ -30,14 +30,14 @@ class DocumentDBStack(Stack):
             ))
 
         # Subnet group and security group for DocumentDB cluster       
-        self.documentdb_subnet_group = documentdb.CfnDBSubnetGroup(self, "DocumentDBSubnetGroup",
-            db_subnet_group_name="documentdb-subnet-group",
+        self.documentdb_subnet_group = documentdb.CfnDBSubnetGroup(self, f"{environment}-DocumentDBSubnetGroup",
+            db_subnet_group_name=f"{environment}-documentdb-subnet-group",
             subnet_ids=self.vpc.select_subnets(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS).subnet_ids,
             db_subnet_group_description="Subnet group for DocumentDB"
         )
-        self.documentdb_security_group = ec2.SecurityGroup(self, "DocumentDBSecurityGroup",
+        self.documentdb_security_group = ec2.SecurityGroup(self, f"{environment}-DocumentDBSecurityGroup",
             vpc=self.vpc,
-            security_group_name="documentdb-sg",
+            security_group_name=f"{environment}-documentdb-sg",
             description="Security group for DocumentDB"
         )
         self.documentdb_security_group.add_ingress_rule(
@@ -47,9 +47,9 @@ class DocumentDBStack(Stack):
         )
 
     
-        self.document_db = documentdb.CfnDBCluster(self, "DocDB",
+        self.document_db = documentdb.CfnDBCluster(self, f"{environment}-DocDB",
             engine_version="5.0.0",
-            db_cluster_identifier="documentdb-cluster",
+            db_cluster_identifier=f"{environment}-documentdb-cluster",
             serverless_v2_scaling_configuration=documentdb.CfnDBCluster.ServerlessV2ScalingConfigurationProperty(
                 min_capacity=0.5,
                 max_capacity=2.0
@@ -62,7 +62,7 @@ class DocumentDBStack(Stack):
             port=27017
         )
         self.document_db.add_dependency(self.documentdb_subnet_group)
-        self.document_db_instance = documentdb.CfnDBInstance(self, "DocDBInstance",
+        self.document_db_instance = documentdb.CfnDBInstance(self, f"{environment}-DocDBInstance",
             db_cluster_identifier=self.document_db.ref,
             db_instance_identifier="instance-1",
             db_instance_class="db.t3.medium"
@@ -77,9 +77,10 @@ class DocumentDBStack(Stack):
         
         """
         # Lambda function to update the secret with the DocumentDB endpoints
-        update_lambda = _lambda.Function(self, "UpdateSecretLambda",
+        update_lambda = _lambda.Function(self, f"{environment}-UpdateSecretLambda",
             runtime=_lambda.Runtime.PYTHON_3_12,
             handler="index.handler",
+            function_name=f"{environment}-documentdb-update-secret",
             code=_lambda.Code.from_inline("""
 import json
 import boto3
@@ -99,9 +100,9 @@ def handler(event, context):
         ))
 
         # Custom resource to update the secret with the DocumentDB endpoints
-        cr.AwsCustomResource(self, "UpdateSecretWithEndpoints",
+        cr.AwsCustomResource(self, f"{environment}-UpdateSecretWithEndpoints",
             on_create=cr.AwsSdkCall(
-                service="Lambda",
+                service=f"{environment}-Lambda",
                 action="invoke",
                 parameters={
                     "FunctionName": update_lambda.function_name,
@@ -113,7 +114,7 @@ def handler(event, context):
                 physical_resource_id=cr.PhysicalResourceId.of("UpdateSecretWithEndpoints")
             ),
             on_update=cr.AwsSdkCall(
-                service="Lambda",
+                service=f"{environment}-Lambda",
                 action="invoke",
                 parameters={
                     "FunctionName": update_lambda.function_name,

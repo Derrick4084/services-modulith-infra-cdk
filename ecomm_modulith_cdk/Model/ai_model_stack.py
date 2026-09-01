@@ -7,13 +7,13 @@ from constructs import Construct
 
 
 class AiModelStack(Stack):
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, **kwargs) -> None:
-        super().__init__(scope, construct_id, description="DocumentDB cluster for customer and notification services", **kwargs)
+    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.Vpc, environment: str, **kwargs) -> None:
+        super().__init__(scope, construct_id, description="Ec2 instaance for model", **kwargs)
 
 
-        self.model_ec2_security_group = ec2.SecurityGroup(self, "ModelEc2SecurityGroup",
+        self.model_ec2_security_group = ec2.SecurityGroup(self, f"{environment}-ModelEc2SecurityGroup",
             vpc=vpc,
-            security_group_name="model-ec2-sg",
+            security_group_name=f"{environment}-model-ec2-sg",
             description="Security group for Model EC2"
         )
 
@@ -35,9 +35,10 @@ class AiModelStack(Stack):
             description="Allow access to embedding model from private subnets"
         )
 
-        self.model_ec2_instance = ec2.Instance(self, "ModelEc2Instance",
+        self.model_ec2_instance = ec2.Instance(self, f"{environment}-ModelEc2Instance",
             instance_type=ec2.InstanceType("g4dn.2xlarge"),  # Choose an appropriate instance type for your model
             machine_image=ec2.MachineImage.latest_amazon_linux2023(),
+            instance_name=f"{environment}-llama-model",
             block_devices=[ec2.BlockDevice(
                 device_name="/dev/xvda",
                 volume=ec2.BlockDeviceVolume.ebs(50)  # 50 GB EBS volume
@@ -408,19 +409,19 @@ echo "Rebooting..."
 sudo reboot''')       
 )
 
-        CfnOutput(self, "ModelEc2InstancePrivateDnsName", 
+        CfnOutput(self, f"{environment}-ModelEc2InstancePrivateDnsName", 
                   value=self.model_ec2_instance.instance_private_dns_name,
                   description="The private DNS name of the Model EC2 instance")
-        CfnOutput(self, "ModelEc2InstancePrivateIp",
+        CfnOutput(self, f"{environment}-ModelEc2InstancePrivateIp",
                   value=self.model_ec2_instance.instance_private_ip,
                   description="The private IP address of the Model EC2 instance") 
 
     @property
     def model_info(self) -> dict:
         return {
-            "model_dns": self.model_ec2_instance.instance_private_dns_name,
-            "model_ip": self.model_ec2_instance.instance_private_ip,
-            "model_sg_id": self.model_ec2_security_group.security_group_id
+            "model-dns": self.model_ec2_instance.instance_private_dns_name,
+            "model-ip": self.model_ec2_instance.instance_private_ip,
+            "model-sg-id": self.model_ec2_security_group.security_group_id
         }
 
     
